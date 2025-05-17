@@ -54,8 +54,9 @@ const login = async () => {
     const res = await loginApi(form)
     if (res.code === 200) {
       userStore.setToken(res.token)
+      userStore.setUsername(form.username)  // ✅ 新增这一行
       ElMessage.success('登录成功')
-      router.push('/')
+      router.push('/forum') // 登录成功后跳转首页
     } else {
       ElMessage.error(res.message || '登录失败')
     }
@@ -63,6 +64,7 @@ const login = async () => {
     ElMessage.error('请求失败')
   }
 }
+
 </script>
 
 <style scoped>
