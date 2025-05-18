@@ -37,6 +37,7 @@
           <el-menu-item index="3">热门帖子</el-menu-item>
           <el-menu-item index="4">论坛公告</el-menu-item>
           <el-menu-item index="5">我的关注</el-menu-item>
+          <el-menu-item index="6" @click="goProfile">个人信息</el-menu-item> 
         </el-menu>
       </div>
 
@@ -44,10 +45,11 @@
       <div class="center-posts">
   <div v-for="post in posts" :key="post.id" class="post-card">
     <div class="post-header">
-      <h3 class="post-title">
+      <h3 class="post-title clickable" @click="goPost(post.id)">
         {{ post.title }}
         <el-tag v-if="post.featured" type="warning" size="small" style="margin-left: 10px;">精华</el-tag>
       </h3>
+
       <div class="post-meta">
         发布者：{{ post.author }} ｜ 发布时间：{{ formatTime(post.createTime) }}
       </div>
@@ -134,6 +136,11 @@ onMounted(async () => {
 const formatTime = (timeStr) => {
   return timeStr ? timeStr.replace('T', ' ').slice(0, 19) : ''
 }
+
+const goPost = (id) => {
+  router.push(`/post/${id}`)
+}
+
 </script>
 
 
@@ -253,6 +260,14 @@ const formatTime = (timeStr) => {
   color: #666;
   display: flex;
   gap: 20px;
+}
+.clickable {
+  cursor: pointer;
+  color: #409EFF;
+  transition: color 0.2s;
+}
+.clickable:hover {
+  color: #66b1ff;
 }
 
 </style>

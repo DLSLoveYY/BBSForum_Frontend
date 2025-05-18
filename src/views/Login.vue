@@ -19,12 +19,14 @@
           <el-input v-model="form.password" type="password" placeholder="请输入密码" />
         </el-form-item>
         <el-form-item>
-          <div class="button-group">
-            <el-button type="primary" @click="login">登录</el-button>
-            <el-button @click="router.push('/register')">去注册</el-button>
-          </div>
-        </el-form-item>
+        <div class="button-group">
+          <el-button type="primary" @click="login">登录</el-button>
+          <el-button @click="router.push('/register')">去注册</el-button>
+          <el-button type="default" @click="router.push('/forum')">返回主页</el-button>
+        </div>
+      </el-form-item>
       </el-form>
+
     </el-card>
   </div>
 </template>
