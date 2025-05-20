@@ -456,6 +456,7 @@ onMounted(async () => {
 })
 </script>
 
+
 <style>
 .post-detail-container {
   max-width: 1200px; /* 原为 900px，现加宽至 1200px */
