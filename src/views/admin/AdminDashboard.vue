@@ -5,6 +5,7 @@
       <el-menu-item index="review">人工审核</el-menu-item>
       <el-menu-item index="posts">帖子管理</el-menu-item>
       <el-menu-item index="users">用户管理</el-menu-item>
+      <el-menu-item index="announce">发布公告</el-menu-item>
     </el-menu>
 
     <!-- 右侧内容区域 -->
@@ -101,15 +102,36 @@
           @current-change="(p) => { currentPage = p; fetchData('users') }"
         />
       </template>
+      <!-- 发布公告 -->
+      <template v-else-if="activeMenu === 'announce'">
+        <h2>发布公告</h2>
+        <el-card>
+          <el-form :model="form" label-width="60px">
+            <el-form-item label="标题">
+              <el-input v-model="form.title" placeholder="请输入公告标题" />
+            </el-form-item>
+            <el-form-item label="内容">
+              <div ref="editorRoot" class="editor-root" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="submitAnnouncement">提交</el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
+      </template>
+
+
     </div>
   </div>
 </template>
 
-
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
+import Editor from '@toast-ui/editor'
+import '@toast-ui/editor/dist/toastui-editor.css'
+
 const router = useRouter()
 
 const activeMenu = ref(localStorage.getItem('adminActiveMenu') || 'review')
@@ -123,13 +145,95 @@ const users = ref([])
 
 const boolText = (row, column, value) => (value ? '是' : '否')
 
+// 发布公告相关
+const form = ref({ title: '' })
+const editorRoot = ref(null)
+let editorInstance = null
+
+const initEditor = () => {
+  if (editorRoot.value && !editorInstance) {
+    editorInstance = new Editor({
+      el: editorRoot.value,
+      height: '400px',
+      initialEditType: 'markdown',
+      previewStyle: 'vertical',
+      hideModeSwitch: true,
+      hooks: {
+        addImageBlobHook: async (blob, callback) => {
+          const formData = new FormData()
+          formData.append('file', blob)
+          const res = await fetch('http://localhost:8080/api/upload', {
+            method: 'POST',
+            body: formData
+          })
+          const json = await res.json()
+          if (json.url) {
+            callback(`http://localhost:8080${json.url}`, blob.name)
+          } else {
+            ElMessage.error('上传失败')
+          }
+        }
+      }
+    })
+  }
+}
+
+const submitAnnouncement = async () => {
+  const title = form.value.title.trim()
+  const content = editorInstance?.getMarkdown()
+
+  if (!title || !content) {
+    ElMessage.warning('标题和内容不能为空')
+    return
+  }
+
+  try {
+    const res = await fetch('http://localhost:8080/api/admin/announce', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
+      },
+      body: JSON.stringify({ title, content })
+    })
+    const json = await res.json()
+    if (json.code === 200) {
+      ElMessage.success('公告发布成功')
+      form.value.title = ''
+      editorInstance.setMarkdown('')
+    } else {
+      ElMessage.error(json.message || '发布失败')
+    }
+  } catch (err) {
+    console.error('提交失败', err)
+    ElMessage.error('服务器错误，发布失败')
+  }
+}
+
+watch(activeMenu, async (val, oldVal) => {
+  // 👇 如果是从“发布公告”切换到别的页面，需要销毁编辑器
+  if (oldVal === 'announce' && editorInstance) {
+    editorInstance.destroy()
+    editorInstance = null
+  }
+
+  if (val === 'announce') {
+    await nextTick()
+    initEditor()
+  } else {
+    fetchData(val)
+  }
+})
+
+
 const handleMenuClick = async (key) => {
   activeMenu.value = key
   localStorage.setItem('adminActiveMenu', key)
   currentPage.value = 1
-  await fetchData(key)
+  if (key !== 'announce') {
+    await fetchData(key)
+  }
 }
-
 
 const fetchData = async (type) => {
   let url = ''
@@ -145,13 +249,12 @@ const fetchData = async (type) => {
     })
     const res = await response.json()
     if (res.code === 200 && res.data) {
-    const { records, total: count } = res.data
-    if (type === 'review') checkPosts.value = records
-    if (type === 'posts') posts.value = records
-    if (type === 'users') users.value = records
-    total.value = count
-    }
-    else {
+      const { records, total: count } = res.data
+      if (type === 'review') checkPosts.value = records
+      if (type === 'posts') posts.value = records
+      if (type === 'users') users.value = records
+      total.value = count
+    } else {
       ElMessage.error(res.message || '加载失败')
     }
   } catch (e) {
@@ -160,126 +263,124 @@ const fetchData = async (type) => {
   }
 }
 
-
 onMounted(() => {
-  fetchData(activeMenu.value)
+  if (activeMenu.value === 'announce') {
+    nextTick(initEditor)
+  } else {
+    fetchData(activeMenu.value)
+  }
 })
 
-
-// 审核通过
+// 操作函数
 const approve = async (id) => {
   try {
     const res = await fetch('http://localhost:8080/api/checkPost/approve', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
       },
       body: JSON.stringify({ id })
-    });
-    const json = await res.json();
+    })
+    const json = await res.json()
     if (json.code === 200) {
-      ElMessage.success('审核通过');
-      fetchData('review');
+      ElMessage.success('审核通过')
+      fetchData('review')
     } else {
-      ElMessage.error(json.message);
+      ElMessage.error(json.message)
     }
   } catch (err) {
-    ElMessage.error('操作失败');
+    ElMessage.error('操作失败')
   }
-};
+}
 
-// 删除待审核帖子
 const remove = async (id) => {
   try {
     const res = await fetch('http://localhost:8080/api/checkPost/delete', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
       },
       body: JSON.stringify({ id })
-    });
-    const json = await res.json();
+    })
+    const json = await res.json()
     if (json.code === 200) {
-      ElMessage.success('已删除');
-      fetchData('review');
+      ElMessage.success('已删除')
+      fetchData('review')
     } else {
-      ElMessage.error(json.message);
+      ElMessage.error(json.message)
     }
   } catch (err) {
-    ElMessage.error('操作失败');
+    ElMessage.error('操作失败')
   }
-};
+}
 
-// 删除正式帖子
 const deletePost = async (id) => {
   try {
     const res = await fetch('http://localhost:8080/api/post/delete', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
       },
       body: JSON.stringify({ id })
-    });
-    const json = await res.json();
+    })
+    const json = await res.json()
     if (json.code === 200) {
-      ElMessage.success('已删除帖子');
-      fetchData('posts');
+      ElMessage.success('已删除帖子')
+      fetchData('posts')
     } else {
-      ElMessage.error(json.message);
+      ElMessage.error(json.message)
     }
   } catch (err) {
-    ElMessage.error('操作失败');
+    ElMessage.error('操作失败')
   }
-};
+}
 
-// 精华切换
 const toggleFeatured = async (id, currentStatus) => {
   try {
     const res = await fetch('http://localhost:8080/api/post/toggleFeatured', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
       },
       body: JSON.stringify({ id })
-    });
-    const json = await res.json();
+    })
+    const json = await res.json()
     if (json.code === 200) {
-      ElMessage.success(json.message);
-      fetchData('posts');
+      ElMessage.success(json.message)
+      fetchData('posts')
     } else {
-      ElMessage.error(json.message);
+      ElMessage.error(json.message)
     }
   } catch (err) {
-    ElMessage.error('操作失败');
+    ElMessage.error('操作失败')
   }
-};
+}
 
-// 管理员权限控制
 const setAdmin = async (username) => {
   try {
     const res = await fetch('http://localhost:8080/api/admin/makeAdmin', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
       },
       body: JSON.stringify({ username })
-    });
-    const json = await res.json();
+    })
+    const json = await res.json()
     if (json.code === 200) {
-      ElMessage.success('已设为管理员');
-      fetchData('users');
+      ElMessage.success('已设为管理员')
+      fetchData('users')
     } else {
-      ElMessage.error(json.message);
+      ElMessage.error(json.message)
     }
   } catch (err) {
-    ElMessage.error('操作失败');
+    ElMessage.error('操作失败')
   }
-};
+}
 
 const unsetAdmin = async (username) => {
   try {
@@ -287,44 +388,43 @@ const unsetAdmin = async (username) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
       },
       body: JSON.stringify({ username })
-    });
-    const json = await res.json();
+    })
+    const json = await res.json()
     if (json.code === 200) {
-      ElMessage.success('已取消管理员');
-      fetchData('users');
+      ElMessage.success('已取消管理员')
+      fetchData('users')
     } else {
-      ElMessage.error(json.message);
+      ElMessage.error(json.message)
     }
   } catch (err) {
-    ElMessage.error('操作失败');
+    ElMessage.error('操作失败')
   }
-};
+}
 
-// 封禁 & 解封
 const banUser = async (username) => {
   try {
     const res = await fetch('http://localhost:8080/api/admin/ban', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
       },
       body: JSON.stringify({ username })
-    });
-    const json = await res.json();
+    })
+    const json = await res.json()
     if (json.code === 200) {
-      ElMessage.success('账号已封禁');
-      fetchData('users');
+      ElMessage.success('账号已封禁')
+      fetchData('users')
     } else {
-      ElMessage.error(json.message);
+      ElMessage.error(json.message)
     }
   } catch (err) {
-    ElMessage.error('操作失败');
+    ElMessage.error('操作失败')
   }
-};
+}
 
 const unbanUser = async (username) => {
   try {
@@ -332,21 +432,21 @@ const unbanUser = async (username) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('adminToken')}`
+        Authorization: `Bearer ${localStorage.getItem('adminToken')}`
       },
       body: JSON.stringify({ username })
-    });
-    const json = await res.json();
+    })
+    const json = await res.json()
     if (json.code === 200) {
-      ElMessage.success('账号已解封');
-      fetchData('users');
+      ElMessage.success('账号已解封')
+      fetchData('users')
     } else {
-      ElMessage.error(json.message);
+      ElMessage.error(json.message)
     }
   } catch (err) {
-    ElMessage.error('操作失败');
+    ElMessage.error('操作失败')
   }
-};
+}
 
 const viewPost = (id, mode = '') => {
   if (mode === 'check') {
@@ -355,7 +455,6 @@ const viewPost = (id, mode = '') => {
     router.push(`/post/${id}`)
   }
 }
-
 </script>
 
 <style scoped>
@@ -393,4 +492,20 @@ const viewPost = (id, mode = '') => {
   padding: 20px;
   overflow-y: auto;
 }
+.editor-root {
+  width: 100%;
+  overflow: hidden;
+}
+
+.toastui-editor {
+  width: 100% !important;
+  box-sizing: border-box;
+  max-height: 600px; /* 最大高度限制 */
+  overflow-y: auto;
+}
+
+.toastui-editor-defaultTextLayer {
+  min-height: 200px;
+}
+
 </style>

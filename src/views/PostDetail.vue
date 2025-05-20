@@ -10,25 +10,49 @@
     <div class="meta">
       <el-avatar :src="post.author.avatar" size="large" style="margin-right: 10px" />
       作者：{{ post.author?.username || '匿名' }} | 发布时间：{{ formatTime(post.createTime) }}
+      浏览量：{{ post.views }} | 点赞：{{ post.likes }}
     </div>
 
     <hr />
+
     <div class="content" v-html="htmlContent" />
+
+    <div class="like-section">
+      <el-button
+        :icon="liked ? 'el-icon-success' : 'el-icon-thumb'"
+        :type="liked ? 'success' : 'primary'"
+        size="small"
+        @click="handleLike"
+      >
+        {{ liked ? '已点赞' : '点赞' }} {{ post.likes }}
+      </el-button>
+    </div>
 
     <!-- 评论区 -->
     <div class="comment-section">
-      <h3>全部回复</h3>
+      <h3 style="display: inline-block;">全部回复</h3>
+      <el-button
+        size="small"
+        type="text"
+        @click="() => { showOnlyAuthor = !showOnlyAuthor; currentPage = 1 }"
+        style="margin-left: 10px;"
+      >
+        {{ showOnlyAuthor ? '查看全部' : '只看楼主' }}
+      </el-button>
+
       <el-divider />
       <div v-if="nestedComments.length === 0" class="no-comments">暂无评论</div>
 
       <div class="comment-list">
-        <div class="comment-item" v-for="(comment, index) in nestedComments" :key="comment.id">
+        <div class="comment-item" v-for="(comment, index) in pagedTopLevelComments" :key="comment.id">
           <!-- 主楼评论 -->
           <div class="comment-header">
             <el-avatar :src="getAvatarUrl(comment.user?.avatar)" size="large" />
             <div class="header-info">
               <strong>{{ comment.user?.username }}</strong>
-              <div class="meta">#{{ index + 1 }}楼 | {{ formatTime(comment.createTime) }}</div>
+              <div class="meta">
+                #{{ index + 1 + (currentPage - 1) * pageSize }}楼 | {{ formatTime(comment.createTime) }}
+              </div>
             </div>
           </div>
           <div class="comment-body" v-html="marked.parse(comment.content)" />
@@ -71,20 +95,17 @@
               </div>
 
               <div v-if="replyVisibleMap[reply.id]" class="reply-box">
-              <div :ref="el => replyEditorRoots[reply.id] = el" class="editor-root" />
-              <el-button
-                size="small"
-                type="primary"
-                style="margin-top: 5px"
-                @click="submitReply(reply.id)"
-              >
-                提交回复
-              </el-button>
+                <div :ref="el => replyEditorRoots[reply.id] = el" class="editor-root" />
+                <el-button
+                  size="small"
+                  type="primary"
+                  style="margin-top: 5px"
+                  @click="submitReply(reply.id)"
+                >提交回复</el-button>
+              </div>
             </div>
 
-            </div>
-
-            <!-- 分页控制 -->
+            <!-- 子评论分页 -->
             <div class="expand-btn" v-if="comment.flatReplies.length > 3 && !replyControlMap[comment.id]?.showAll">
               <el-button size="small" type="link" @click="toggleShowAll(comment.id)">
                 展开全部 {{ comment.flatReplies.length }} 条回复
@@ -111,6 +132,21 @@
           </div>
         </div>
       </div>
+
+      <!-- ✅ 主评论分页 -->
+      <div class="floor-pagination" v-if="totalPages > 1">
+        <el-button size="small" :disabled="currentPage === 1" @click="currentPage--">上一页</el-button>
+        <el-button
+          v-for="p in totalPages"
+          :key="p"
+          size="small"
+          :type="p === currentPage ? 'primary' : 'default'"
+          @click="currentPage = p"
+        >
+          {{ p }}
+        </el-button>
+        <el-button size="small" :disabled="currentPage === totalPages" @click="currentPage++">下一页</el-button>
+      </div>
     </div>
 
     <!-- 发表评论 -->
@@ -124,6 +160,7 @@
     <el-skeleton :rows="5" animated />
   </div>
 </template>
+
 
 
 <script setup>
@@ -154,6 +191,56 @@ const replyVisibleMap = ref({})
 const replyContentMap = ref({})
 
 const replyControlMap = ref({})  // 每层评论分页控制
+const liked = ref(false)
+const likeKey = `liked_post_${id}`
+
+const showOnlyAuthor = ref(false)
+
+const currentPage = ref(1)
+const pageSize = 10
+
+const pagedTopLevelComments = computed(() => {
+  const list = filteredTopLevelComments.value
+  const start = (currentPage.value - 1) * pageSize
+  return list.slice(start, start + pageSize)
+})
+
+const totalPages = computed(() =>
+  Math.ceil(filteredTopLevelComments.value.length / pageSize)
+)
+
+const handleLike = async () => {
+  const url = liked.value
+    ? `http://localhost:8080/api/post/${id}/unlike`
+    : `http://localhost:8080/api/post/${id}/like`
+
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${userStore.token}`
+      }
+    })
+    const json = await res.json()
+    if (json.code === 200) {
+      liked.value = !liked.value
+      post.value.likes = json.likes
+      if (liked.value) {
+        localStorage.setItem(likeKey, '1')
+        ElMessage.success('点赞成功')
+      } else {
+        localStorage.removeItem(likeKey)
+        ElMessage.success('已取消点赞')
+      }
+    } else {
+      ElMessage.error(json.message || '操作失败')
+    }
+  } catch (err) {
+    ElMessage.error('网络错误，操作失败')
+  }
+}
+
+
 
 const getDisplayReplies = (comment) => {
   const replies = comment.flatReplies || []
@@ -296,16 +383,28 @@ const submitComment = async () => {
 }
 
 const loadPost = async () => {
+  // 如果不是审核模式，增加浏览量
+  if (mode !== 'check') {
+    await fetch(`http://localhost:8080/api/post/${id}/view`, { method: 'PUT' })
+  }
+
   const endpoint = mode === 'check'
     ? `http://localhost:8080/api/checkPost/detail?id=${id}`
     : `http://localhost:8080/api/post/detail?id=${id}`
 
   try {
-    const res = await fetch(endpoint)
+    const res = await fetch(endpoint, {
+      headers: mode !== 'check' && userStore.token
+        ? { Authorization: `Bearer ${userStore.token}` }
+        : {}
+    })
     const json = await res.json()
     if (json.code === 200) {
       post.value = json.data
       htmlContent.value = marked.parse(json.data.content || '')
+
+      // ✅ 设置点赞状态（后端返回 liked 字段）
+      liked.value = !!json.data.liked
     } else {
       ElMessage.error(json.message || '帖子不存在')
     }
@@ -314,7 +413,9 @@ const loadPost = async () => {
   }
 }
 
+
 const loadNestedComments = async () => {
+  if (mode === 'check') return 
   const res = await fetch(`http://localhost:8080/api/comment/flat?postId=${id}`)
   const json = await res.json()
   const flatList = json || []
@@ -420,10 +521,19 @@ const deletePost = async () => {
     ElMessage.info('已取消删除')
   }
 }
+const filteredTopLevelComments = computed(() => {
+  if (!showOnlyAuthor.value) return nestedComments.value
+  const authorName = post.value?.author?.username
+  return nestedComments.value.filter(c => c.user?.username === authorName)
+})
 
 onMounted(async () => {
   await loadPost()
   await loadNestedComments()
+   // ✅ 检查 localStorage 是否标记已点赞
+  if (localStorage.getItem(likeKey)) {
+    liked.value = true
+  }
   await nextTick()
   if (commentEditorRoot.value) {
     commentEditorInstance = new Editor({
@@ -633,4 +743,26 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
 }
+
+.sub-body img {
+  max-width: 50%;          /* 控制宽度 */
+  max-height: 150px;       /* 限制最大高度，防止超长图撑高 */
+  display: block;
+  margin: 10px 0;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  object-fit: contain;     /* 保证图片缩放时比例正常 */
+}
+
+.like-section {
+  margin: 15px 0;
+}
+.floor-pagination {
+  margin-top: 20px;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 </style>
